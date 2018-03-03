@@ -1,0 +1,381 @@
+
+<html>
+    <style>
+        *{
+            margin:0;
+            padding:0;
+        }
+        html,body{
+            width:100%;
+            height:100%;
+            background:#6651e6;
+            overflow-x: hidden;
+            overflow-y: hidden;
+        }
+        #canvas{
+            margin-left: 20%;
+            margin-top: 10%;
+            background:#ddd;
+            display: block;
+        }
+    </style>
+    <body>
+        <div>
+            <canvas id="canvas" ></canvas>
+            <button onclick="saveImg()">Download file width lines</button>
+            <button onclick="saveMask()">Save result mask</button>
+            <button onclick="costGraph()">ShowCostGraph</button>
+            <button onclick="hideCostGraph()">hideCostGraph</button>
+            <button onclick="backspace()">backspace</button>
+        </div>
+        <image hidden="true" id="theimage"></image>
+        <canvas hidden="true" id="anothercanvas" ></canvas>
+    </body>
+    <script type="text/javascript" src="./canvas2img.js"></script>
+    <script>
+
+        var C = {
+            PList: [],
+            ctx : null,
+            cvs : null,
+            imglen : null,
+            imgwid : null,
+            imghei : null,
+            imgData : null,
+            maxD: 0,
+            INF: 1000000,
+            CostMap: {},
+            CostHistory: [],
+            PathList: [],
+            canvasHistory:[],
+            init: function(){
+                var image = new Image();
+                image.src = "./img/vg.jpg";
+                C.cvs = document.getElementById("canvas");
+                C.ctx =  C.cvs.getContext("2d");
+                image.onload = function(){
+                    document.getElementById("canvas").width = image.width;
+                    document.getElementById("canvas").height = image.height;
+                    C.ctx.drawImage(image, 0, 0, C.cvs.width, C.cvs.height);
+                    C.imgData = C.ctx.getImageData(0,0,C.cvs.width, C.cvs.height).data;  
+                    C.imglen = C.imgData.length / 4;
+                    C.imgwid = C.cvs.width;
+                    C.imghei = C.cvs.height;
+                    for(var i=0;i<C.cvs.height;i++){
+                        for(var t=0;t<C.cvs.width;t++){
+                           C.PList.push(C.getEmptyPoint(t,i));
+                        }
+                    }
+                    C.maxD = C.findMaxD();
+                    for(var i=0;i<C.PList.length;i++){
+                        C.calCost(C.maxD, C.PList[i]);
+                    }
+                }
+            },
+            getEmptyPoint: function(i,t) {
+                var temp = C.getNeiDistance({"x": i, "y": t});
+                return {
+                    "x":i,
+                    "y":t,
+                    "index": i + t * C.cvs.width,
+                    "cost": [],
+                    "neighbor": temp.Nei,
+                    "Distance": temp.Distance,
+                }
+            },
+            drawCircle: function(x, y, r, radiusStart, radiusEnd){
+                C.ctx.beginPath();
+                C.ctx.arc(x, y, r, radiusStart, radiusEnd * Math.PI);
+                C.ctx.strokeStyle="blue";
+                C.ctx.stroke();
+            },
+            drawLine: function(imgData, from, to, sig){
+                start = from[0] + from[1] * C.cvs.width;
+                end = to[0] + to[1] * C.cvs.width;
+                path = C.getShortestPath(start, end);
+                lastPath = path;
+                for(var i=0;i < path.length;i++){
+                    imgData.data[path[i] * 4] = 0;
+                    imgData.data[path[i] * 4 + 1] = 255;
+                    imgData.data[path[i] * 4 + 2] = 0;
+                    imgData.data[path[i] * 4 + 3] = 255;
+                }
+                return imgData;
+            },
+            getNeiDistance: function(point) {
+                var Nei = C.transToImageIndex(C.getNeighbors(point));
+                var Distance = [];
+                Distance[0] = Math.abs(C.imgData[Nei[1] * 4] + C.imgData[Nei[2] * 4] - C.imgData[Nei[6] * 4] - C.imgData[Nei[7] * 4]) / 4.00;
+                Distance[1] = Math.abs(C.imgData[Nei[0] * 4] - C.imgData[Nei[2] * 4]) / Math.sqrt(2);
+                Distance[2] = Math.abs(C.imgData[Nei[0] * 4] + C.imgData[Nei[1] * 4] - C.imgData[Nei[3] * 4] - C.imgData[Nei[4] * 4]) / 4.00;
+                Distance[3] = Math.abs(C.imgData[Nei[2] * 4] - C.imgData[Nei[4] * 4]) / Math.sqrt(2);
+                Distance[4] = Math.abs(C.imgData[Nei[2] * 4] + C.imgData[Nei[3] * 4] - C.imgData[Nei[5] * 4] - C.imgData[Nei[6] * 4]) / 4.00;
+                Distance[5] = Math.abs(C.imgData[Nei[4] * 4] - C.imgData[Nei[6] * 4]) / Math.sqrt(2);
+                Distance[6] = Math.abs(C.imgData[Nei[4] * 4] + C.imgData[Nei[5] * 4] - C.imgData[Nei[7] * 4] - C.imgData[Nei[0] * 4]) / 4.00;
+                Distance[7] = Math.abs(C.imgData[Nei[0] * 4] - C.imgData[Nei[6] * 4]) / Math.sqrt(2);
+                return {Distance,Nei};
+            },
+            getNeighbors: function(point) {
+                if(point.x == 0){
+                    point.x = 1;
+                }else if(point.x == C.cvs.width - 1){
+                    point.x = C.cvs.width - 1;
+                }
+                if(point.y == 0){
+                    point.y == 1;
+                }else if(point.y == C.cvs.height - 1){
+                    point.y == C.cvs.height - 1;
+                }
+                return [{"x": point.x + 1, "y": point.y},
+                {"x": point.x + 1, "y": point.y - 1},
+                {"x": point.x, "y": point.y - 1},
+                {"x": point.x - 1, "y": point.y - 1},
+                {"x": point.x - 1, "y": point.y},
+                {"x": point.x - 1, "y": point.y + 1},
+                {"x": point.x, "y": point.y + 1},
+                {"x": point.x + 1, "y": point.y + 1}];
+            },
+            transToImageIndex: function(item) {
+                var index = [];
+                for(var i = 0;i < item.length;i++){
+                    index[i] = (item[i].x + item[i].y * C.cvs.width);
+                }
+                return index;
+            },
+            calCost: function(maxDis, point) {
+                point.cost[0] = (maxDis - point.Distance[0]);
+                point.cost[1] = (maxDis - point.Distance[1]) * Math.sqrt(2);
+                point.cost[2] = (maxDis - point.Distance[2]);
+                point.cost[3] = (maxDis - point.Distance[3]) * Math.sqrt(2);
+                point.cost[4] = (maxDis - point.Distance[4]);
+                point.cost[5] = (maxDis - point.Distance[5]) * Math.sqrt(2);
+                point.cost[6] = (maxDis - point.Distance[6]);
+                point.cost[7] = (maxDis - point.Distance[7]) * Math.sqrt(2);
+                if(point.x == 0 || point.x == C.cvs.width - 1 || point.y == 0 || point.y == C.cvs.height - 1){
+                    point.cost[0] = C.INF;
+                    point.cost[1] = C.INF;
+                    point.cost[2] = C.INF;
+                    point.cost[3] = C.INF;
+                    point.cost[4] = C.INF;
+                    point.cost[5] = C.INF;
+                    point.cost[6] = C.INF;
+                    point.cost[7] = C.INF;
+                }else {
+                    if(point.x == 1){
+                        point.cost[3] = C.INF;
+                        point.cost[4] = C.INF;
+                        point.cost[5] = C.INF;
+                    }else if(point.x == C.cvs.width - 2){
+                        point.cost[0] = C.INF;
+                        point.cost[1] = C.INF;
+                        point.cost[7] = C.INF;
+                    }
+                    if(point.y == 1){
+                        point.cost[1] = C.INF;
+                        point.cost[2] = C.INF;
+                        point.cost[3] = C.INF;
+                    }else if(point.y == C.cvs.height - 2){
+                        point.cost[5] = C.INF;
+                        point.cost[6] = C.INF;
+                        point.cost[7] = C.INF;
+                    }
+                }
+            },
+            findMaxD: function() {
+                var temp = 0;
+                for(var i = 0; i < C.imglen ; i++){
+                    for(var t = 0;t < 8; t++){
+                        if(C.PList[i] && temp < C.PList[i]["Distance"][t]){
+                            temp = C.PList[i]["Distance"][t];
+                        }
+                    }
+                }
+                return temp;
+            },
+            Dijkstra: function(startPoint) {
+                var pointSet = {};
+                var minIndex = 0;
+                var minCost = [];
+                var history = [];
+                for(var i = 0;i<C.imglen; i++){
+                    minCost[i] = C.INF;
+                    history[i] = i;
+                }
+                minCost[startPoint] = 0;
+                pointSet[startPoint] = 1;
+                for(var i = 0;i<C.PList[startPoint]["neighbor"].length;i++){
+                    minCost[C.PList[startPoint]["neighbor"][i]] = C.PList[startPoint]["cost"][i];
+                    history[C.PList[startPoint]["neighbor"][i]] = startPoint;
+                }
+                var d1 = new Date();
+                for(var i=0;i < C.imglen; i++){
+                    var min = C.INF;
+                    for(var t=0;t < minCost.length;t++){
+                        if(minCost[t] < min && pointSet[t] != 1){
+                            min = minCost[t];
+                            minIndex = t;
+                        }
+                    }
+                    pointSet[minIndex] = 1;
+                    for(var t=0;t<C.PList[minIndex]["neighbor"].length;t++){
+                        if(pointSet[C.PList[minIndex]["neighbor"][t]] != 1 && 
+                        minCost[minIndex] != C.INF && 
+                        C.PList[minIndex]["cost"][t] != C.INF &&
+                        (minCost[C.PList[minIndex]["neighbor"][t]] > (minCost[minIndex] + C.PList[minIndex]["cost"][t]))){
+                            minCost[C.PList[minIndex]["neighbor"][t]] = minCost[minIndex] + C.PList[minIndex]["cost"][t];
+                            history[C.PList[minIndex]["neighbor"][t]] = minIndex;
+                        }
+                    }
+                }
+                C.CostHistory.push(minCost);
+                C.CostMap[startPoint] = history;
+            },
+            getShortestPath: function(startPoint, endPoint) {
+                var x = endPoint;
+                var path = [];
+                path.push(x);
+                for(var i=0;i<10000;i++){
+                    x = C.CostMap[startPoint][x];
+                    path.push(x);
+                    if(x == startPoint){
+                        break;
+                    }
+                }
+                return path;
+            }
+        }
+
+        C.init();
+        var flag = 0;
+        var clickPoints = [];
+        var recoverData = null;
+        var lastPath = null;
+        C.cvs.addEventListener('click', function(e){
+            console.log(e.layerX, e.layerY,e.layerX + e.layerY * C.cvs.width);
+            if(flag < 3){
+                C.canvasHistory.push(C.ctx.getImageData(0, 0, C.cvs.width, C.cvs.height));
+                console.log("waiting....");
+                flag = 1;
+                recoverData = null;
+                C.drawCircle(e.layerX, e.layerY, 1, 0, 2);
+                clickPoints.push([e.layerX, e.layerY]);
+                C.Dijkstra(e.layerX + e.layerY * C.cvs.width);
+                console.log("Done!");
+                C.PathList.push(lastPath);
+            }
+        }, false);
+        
+        C.cvs.addEventListener('mousemove', function(e){
+            if(clickPoints.length > 0){
+                if(recoverData != null){
+                    C.ctx.putImageData(recoverData, 0, 0);
+                }
+                if(flag == 1){
+                    recoverData = C.ctx.getImageData(0, 0, C.cvs.width, C.cvs.height);
+                    temp = C.drawLine( C.ctx.getImageData(0, 0, C.cvs.width, C.cvs.height), clickPoints[clickPoints.length-1], [e.layerX, e.layerY]);
+                    C.ctx.putImageData(temp, 0, 0);
+                }
+                if(flag == 2){
+                    // if(recoverData != null){
+                    //     C.ctx.putImageData(recoverData, 0, 0);
+                    // }
+                    recoverData = null;
+                    flag = 3; // 禁止其他鼠标点击事件
+                }
+            }
+        }, false);
+
+        document.onkeydown=function(event){
+            var e = event || window.event || arguments.callee.caller.arguments[0];
+            if(e && e.keyCode==27 && flag != 2){ // 按 Esc 
+                flag = 2;
+                item = clickPoints[0];
+                temp = C.drawLine( recoverData, clickPoints[clickPoints.length-1], [item[0], item[1]]);
+                C.PathList.push(lastPath);
+                C.ctx.putImageData(temp, 0, 0);
+                recoverData = C.ctx.getImageData(0, 0, C.cvs.width, C.cvs.height);
+                C.canvasHistory.push(recoverData);
+            }
+        };
+        var saveImg = function() {
+            var canvas = document.getElementById("canvas");
+                document.getElementById("theimage").src = canvas.toDataURL();
+                Canvas2Image.saveAsPNG(canvas);
+        }
+        var saveMask = function() {
+            var matrix = [];
+            for(var i=0;i<C.PList.length;i++){
+                matrix[i] = 0;
+            }
+            var pset = {};
+            for(var i = 1;i< C.PathList.length;i++){
+                for(var j = 0;j<C.PathList[i].length;j++){
+                    v = C.PathList[i][j];
+                    y = Math.floor( v / C.cvs.width );
+                    matrix[v] = -1000;
+                    if(!pset[v]){
+                        pset[v] = 1;
+                        for(var t = y * C.cvs.width + 1;t < (y+1) * C.cvs.width-1;t++){
+                            if(t < v && matrix[v+1] >= 0 && matrix[v-1] >=0){
+                                matrix[t] = matrix[t] + 1;
+                            }
+                        }
+                    }
+                }
+            }
+            d = C.ctx.getImageData(0, 0, C.cvs.width, C.cvs.height);
+            for(var i=0;i<matrix.length;i++){
+                if(matrix[i] % 2 == 1 && (matrix[Math.floor( i / C.cvs.width ) * C.cvs.width + 2] %2) != 1){
+                }else{
+                    d.data[i*4] = 0;
+                    d.data[i*4 + 1] = 0;
+                    d.data[i*4 + 2] = 0;
+                    // d.data[i*4] = 255;
+                }
+            }
+            C.ctx.putImageData(d, 0, 0);
+            saveImg();
+            return matrix;
+        }
+        var costGraph = function() {
+            if(C.CostHistory.length > 0){
+                var temp = C.CostHistory[0];
+                var max = 0;
+                recoverData = C.ctx.getImageData(0, 0, C.cvs.width, C.cvs.height);
+                for(var i=0;i < temp.length;i++){
+                    if(temp[i] == C.INF){
+                        temp[i] = 0;
+                    }else{
+                        if(max < temp[i]){
+                            max = temp[i];
+                        }
+                    }
+                }
+                for(var i=0;i < temp.length;i++){
+                    t = temp[i]/max;
+                    var gray = 255*t;
+                    recoverData.data[i * 4 + 1] = gray;
+                    recoverData.data[i * 4 + 2] = gray;
+                    recoverData.data[i * 4] = gray;
+                }
+                C.ctx.putImageData(recoverData, 0, 0);
+            }
+        }
+
+        var hideCostGraph = function() {
+            if(C.canvasHistory.length > 0){
+                recoverData = C.canvasHistory[C.canvasHistory.length - 1];
+                C.ctx.putImageData(recoverData, 0, 0);
+            }
+        }
+        var backspace = function(params) {
+            if(clickPoints.length > 0){
+                clickPoints.pop();
+                C.CostHistory.pop();
+                C.PathList.pop();
+                dt = C.canvasHistory.pop();
+                C.ctx.putImageData(dt, 0, 0);
+            }
+        }
+    </script>
+</html>
